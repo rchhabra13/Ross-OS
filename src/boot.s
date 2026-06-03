@@ -13,6 +13,13 @@ _start:
     ldr     x1, =__stack_top
     mov     sp, x1
 
+    // Enable FP/SIMD at EL1/EL0 (CPACR_EL1.FPEN=0b11) — the compiler emits NEON
+    // for memcpy/str ops, which otherwise traps (ESR EC=0x07) with FP disabled.
+    mrs     x1, cpacr_el1
+    orr     x1, x1, #(3 << 20)
+    msr     cpacr_el1, x1
+    isb
+
     // Zero the BSS
     ldr     x1, =__bss_start
     ldr     x2, =__bss_end

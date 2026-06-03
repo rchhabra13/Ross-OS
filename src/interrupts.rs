@@ -62,14 +62,23 @@ pub fn current_el() -> u64 {
     (v >> 2) & 0b11
 }
 
-pub fn init() {
+/// Install the EL1 exception vector table (VBAR_EL1). Safe to call early — before
+/// the GIC/timer — so synchronous faults are reported instead of jumping to the
+/// reset-default vector base (0) and dying silently.
+pub fn install_vectors() {
     unsafe {
-        // 1. Install the vector table.
         extern "C" {
             static vectors: u8;
         }
         let vbar = &vectors as *const u8 as u64;
         asm!("msr vbar_el1, {}", in(reg) vbar);
+    }
+}
+
+pub fn init() {
+    unsafe {
+        // 1. Vector table (idempotent; also installed early in kernel_main).
+        install_vectors();
 
         // 2. GIC: enable distributor, enable timer IRQ, open priority mask,
         //    enable CPU interface.

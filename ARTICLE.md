@@ -707,6 +707,77 @@ and both tasks hammer the shared heap every beat with no corruption or deadlock.
   nest-safe IRQ-masked critical section (`sync::without_preempt`), not a spinlock —
   a spinlock held across a context switch is exactly the hang you're avoiding.
 
+## Step 9 — Phase 6: a graphical framebuffer (it has a UI now)
+
+Up to here the kernel talked over a serial line. Phase 6 puts **pixels on a real
+screen**. The goal is a desktop UI; this is the foundation — a linear framebuffer
+plus drawing and text.
+
+### Getting a framebuffer on QEMU `virt`
+
+The `virt` machine has no display by default. The simplest bare-metal-friendly option
+is **ramfb** (`-device ramfb`): a framebuffer whose scanout address the *guest* sets,
+via the **fw_cfg** firmware-config interface. The handshake:
+
+1. Walk the fw_cfg **file directory** (select key `0x0019`, read a big-endian count,
+   then 64-byte entries) to find the selector for the file `etc/ramfb`.
+2. Allocate a contiguous chunk of RAM for the pixels (`1024×768×4` ≈ 3 MiB) — the
+   bump allocator is naturally contiguous, so this is one big bump.
+3. DMA a 28-byte config struct (framebuffer address, fourcc format, width, height,
+   stride — **all big-endian**) into that fw_cfg file using a DMA descriptor.
+
+After that, QEMU continuously scans out whatever the kernel writes into that RAM.
+Pixel format `XR24` (XRGB8888) means each pixel is a little-endian `u32` `0x00RRGGBB`.
+
+```rust
+let dma = DmaAccess {
+    control: (((sel as u32) << 16) | DMA_SELECT | DMA_WRITE).to_be(),
+    length:  28u32.to_be(),
+    address: (&cfg as *const RamfbCfg as u64).to_be(),
+};
+ptr::write_volatile(FWCFG_DMA as *mut u64, (&dma as *const _ as u64).to_be());
+```
+
+### Two bugs found while bringing it up
+
+- **Silent death.** First run hung with no output. Cause: `fb::init()` ran *before*
+  `interrupts::init()` installed `VBAR_EL1`, so any fault jumped to the reset-default
+  vector base (0) and died silently. Fix: split out `install_vectors()` and call it at
+  the very top of `kernel_main`, so faults are *reported* from the start. Immediately
+  the real error appeared.
+- **FP/SIMD trap (`ESR` EC `0x07`).** With vectors installed, the fault was a trapped
+  Advanced-SIMD access. The compiler emits NEON for `memcpy`/string ops, but FP/SIMD
+  is disabled out of reset (`CPACR_EL1`). Earlier phases never touched it; the new
+  framebuffer code did. Fix in `boot.s`: `CPACR_EL1.FPEN = 0b11` before `kernel_main`.
+
+### Text: an 8×8 bitmap font
+
+Graphics need glyphs. `font.rs` embeds a public-domain **8×8** font (one `[u8; 8]`
+per ASCII char, each byte a row, LSB = leftmost pixel). `draw_char` expands a glyph
+at an integer `scale`, `draw_str` walks a string. Colors composite over whatever is
+already on screen (no glyph background), so labels sit on top of panels.
+
+### Result
+
+The kernel now boots straight into a graphical desktop — a titlebar, three colored
+panels, and crisp scaled text — verified by dumping the framebuffer (`./run.sh shot`)
+and inspecting pixels:
+
+![Ross-OS desktop](docs/screenshot.png)
+
+```sh
+./run.sh gui     # opens a real Cocoa window on macOS
+```
+
+### What was learned
+
+- **ramfb + fw_cfg**: how a guest negotiates a framebuffer with QEMU over fw_cfg DMA,
+  and that every multi-byte fw_cfg field is big-endian.
+- **Install exception vectors *first*** — before anything that can fault — or early
+  bugs are invisible.
+- **Enable FP/SIMD (`CPACR_EL1`)** before running compiler-generated NEON.
+- Software rendering basics: linear framebuffer, XRGB8888, a scaled bitmap font.
+
 ## Reproduce
 
 ```sh

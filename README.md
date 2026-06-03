@@ -22,8 +22,22 @@ The base kernel is built up phase by phase. Done so far:
 | 3 | Physical frame allocator (bump) + MMU with identity page tables |
 | 4 | Kernel heap (`linked_list_allocator`) → the `alloc` crate works |
 | 5 | Kernel threads + **preemptive** round-robin scheduler |
+| 6 | **Graphical framebuffer** (ramfb) + 8×8 bitmap-font text rendering |
 
-Next: syscalls + EL0 user mode, then a shell, then the AI layers.
+Next: virtio keyboard + mouse, a drawn cursor and windows (desktop UI), then
+syscalls + EL0 user mode, a shell, and the AI layers.
+
+### Phase 6 highlight — a real graphical screen
+
+`-device ramfb` gives a linear framebuffer the kernel sets up over fw_cfg DMA.
+The kernel paints a titlebar, panels, and bitmap text — booting straight into a
+graphical desktop instead of a serial console:
+
+![Ross-OS desktop](docs/screenshot.png)
+
+```sh
+./run.sh gui     # opens a real window
+```
 
 ### Phase 5 highlight — preemptive multitasking
 
@@ -57,6 +71,8 @@ src/
   task.rs        Task structs + round-robin scheduler
   switch.s       cpu_switch (callee-saved context switch) + task_trampoline
   sync.rs        IRQ-masked critical sections (without_preempt)
+  fb.rs          ramfb framebuffer (fw_cfg DMA setup) + draw/text primitives
+  font.rs        8x8 public-domain bitmap font (CC0)
 linker.ld        Load at 0x4000_0000; stack + __free_ram_start symbols
 ```
 

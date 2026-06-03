@@ -37,6 +37,20 @@ pub fn alloc_frame() -> Option<usize> {
     }
 }
 
+/// Allocate `bytes` of **contiguous**, frame-aligned physical RAM and return its
+/// start address. The bump allocator is naturally contiguous, so this is just a
+/// bigger bump — handy for a framebuffer that must be one linear region.
+pub fn alloc_contig(bytes: usize) -> Option<usize> {
+    let size = (bytes + FRAME_SIZE - 1) & !(FRAME_SIZE - 1);
+    let p = NEXT.fetch_add(size, Ordering::Relaxed);
+    if p + size <= RAM_END {
+        unsafe { ptr::write_bytes(p as *mut u8, 0, size) };
+        Some(p)
+    } else {
+        None
+    }
+}
+
 /// Bytes of RAM still free.
 pub fn free_bytes() -> usize {
     RAM_END.saturating_sub(NEXT.load(Ordering::Relaxed))
